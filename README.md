@@ -93,6 +93,79 @@ All results are after transaction costs, using the local backtester.
 
 **How development was separated from validation:** strategies were first developed on Oct 2016 – Sep 2021 only, using walk-forward splits, and Oct 2021 – Oct 2023 was held back untouched. The first frozen strategy scored a Sharpe of **−0.27** on that holdout. Its short trades failed in the 2022 bear market. The final version above (long-only dip buying, blended with the volume strategy) was then chosen using all 7 years. **The Oct 2021 – Oct 2023 figures above are therefore not out-of-sample**, and no untouched data remains. The notebook records the original holdout result and the reason for the revision.
 
+## Research process: what I tried, what worked and what didn't
+
+Unless noted otherwise, all figures are for the development period (Oct 2016 – Sep 2021), after costs.
+
+### Starting point: costs decide everything
+
+Holding all six assets every day lost money (Sharpe −1.07, CAGR −19.1%), because the average open-to-close gain is smaller than the 0.10% round-trip cost. So any strategy has to trade **selectively**, only on days when the expected move is clearly larger than the cost. This shaped every idea below.
+
+An early test of a simple lag-1 rule (follow or fade yesterday's direction, learned per asset) beat buy-and-hold in only 2–3 of 5 walk-forward splits. That's no better than chance, so trading every day on small daily patterns was ruled out.
+
+### My own ideas
+
+**1. Market-wide moves vs stock-specific moves.** *Worked, after refining.*
+
+My hypothesis was that stocks don't move independently. A move shared by the whole market (for example, a reaction to economic news) should behave differently from a move caused by news about one company. I tested two versions:
+
+| Version | What it measures | Result |
+|---|---|---|
+| **Market trend** (first attempt) | Has an equal-weight index of the six assets risen over the last 50 days? | Dev Sharpe 1.42, but **rejected**. Rebuilding the index without the asset being traded (leave-one-out) dropped the Sharpe to 1.23, with one split going negative. That suggested it mostly repeated each stock's own trend. It was also fragile: 7 of 12 nearby settings had a losing split. |
+| **Market-driven** (refined) | Did the *other five* assets move more than 1% in the same direction *today*? | **Kept.** It tests the hypothesis directly. See the table below. |
+
+What fading a big move (more than 3%) earned the next day, before costs:
+
+| Type of big move | Count | Avg next-day return | Hit rate |
+|---|---|---|---|
+| Market-driven | 321 | **0.82%** | **59%** |
+| Stock-specific (others within ±1%) | 305 | 0.20% | 52% |
+
+**Market-driven moves reverse about four times more strongly.** A plausible explanation: market-wide moves are often crowd panic or forced selling that drags stocks down regardless of their value, while stock-specific moves are more often real information that sticks. As a strategy, fade + trend + market-driven scored a Sharpe of 1.42 with a max drawdown of −10.2%, compared with 0.43 for stock-specific moves only. In the final strategy, market-driven dips trigger buying. Across all 7 years, adding this to the dip-buying rule raised the 2022 Sharpe from 0.07 to 0.51.
+
+**2. Regression lines for the trend.** *Worked, but not kept.*
+
+My idea was to fit a regression line through recent log prices and use its slope as a smoother measure of trend direction.
+- **On its own, as a momentum strategy** (long if the 60-day slope is up, short if down): Sharpe −1.21, the worst result tested. It trades every day and pays costs every day.
+- **As a filter on mean reversion** (only fade moves in the direction of the slope): Sharpe 1.29, slightly better than the simple 100-day price change (1.26).
+
+The simpler 100-day price change was kept for the final strategy. Both answer the same question (which way is the asset heading?), and the simple version is easier to explain and to calculate day by day. The small difference in development results was not enough to justify the extra complexity.
+
+
+### Other strategy types tested
+
+| Strategy | Type | Dev Sharpe | Verdict |
+|---|---|---|---|
+| Fade big moves (more than 3%) | Mean reversion | 0.90 | Worked. The core idea everything else builds on. |
+| Fade with trend (only bet on reversals in the direction of the 100-day trend) | Mean reversion + momentum filter | 1.26 | Worked. Stable across 15 threshold and trend settings (Sharpe 0.75–1.31). |
+| + volume confirmation (only fade moves on above-average volume) | Filter | 1.34 | **Worked.** It improved results at every setting from 0.8× to 1.3× normal volume, and cut max drawdown from −17.8% to −13.3%. Kept. |
+| Fade up days only (short big spikes) | Mean reversion | 0.93 | Worked in development, but **failed in the holdout** (see below). |
+| Bollinger bands (20-day, 2 standard deviations) | Mean reversion | 0.03 | Didn't work. |
+| Pairs trade A–C (most correlated pair, 60-day spread z-score) | Statistical arbitrage | 0.14 | Didn't work. Too few profitable trades. |
+| Momentum (regression slope) | Momentum | −1.21 | Didn't work on its own (see idea 2). |
+| ETF arbitrage, market making | — | — | Not possible: there's no ETF data, and only one trade a day. |
+
+### Risk and filter ideas that didn't work
+
+| Idea | Result | Why |
+|---|---|---|
+| Smaller positions in volatile assets | Sharpe 1.26 → 1.24 | No real effect. |
+| Skip or shrink trades when the market is turbulent | Sharpe 1.26 → 0.85–1.05 | **Hurt.** The strategy makes its money in turbulent markets, when overreactions happen. |
+| Skip days when the whole market moved more than 2% | Sharpe 1.26 → 0.45 | **Hurt badly.** It removed the best (market-driven) trades. This was an early clue for idea 1. |
+| Fade only stock-specific moves (relative to the market) | Sharpe 1.08 | Weaker, with two losing splits. Consistent with idea 1. |
+| Adaptive switch (trade only if the strategy was profitable over the last 40–120 days) | Worse in 2017, 2019 and 2022 (all 7 years) | Too slow to react, and it switched off before recoveries. |
+| Drawdown brake (halve exposure after a 5–15% drawdown) | Sharpe 1.00 → 1.06–1.10 (all 7 years) | Only a small improvement. Not kept. |
+| Capping each asset at 25–50% of the portfolio | Max DD −14% → −4 to −7%, but CAGR 23% → 8–15% | A trade-off rather than an improvement. Not kept. |
+
+### The holdout, and what it changed
+
+The first frozen strategy was a ⅓ each blend of fade + trend + market-driven, fade + trend + volume, and fade up days only. It scored a Sharpe of 1.63 in development, but **−0.27** on the untouched holdout (Oct 2021 – Oct 2023):
+- The core pattern weakened. Market-driven big moves reversed by only 0.03% the next day in the holdout, against 0.82% in development. 2022 was a steady bear market in which big moves often kept going instead of bouncing.
+- **Short trades lost 16.5%, while long trades made 8.7%.**
+- Only fade + trend + volume stayed positive (Sharpe 0.55).
+
+Re-testing year by year on all 7 years showed that **dropping the shorts from dip buying** gave only one losing year out of seven, with a positive 2022. In an uptrend, buying panic dips held up; shorting rallies did not. The final strategy combines this long-only dip buying with fade + trend + volume. Keeping the volume strategy keeps the strategy trading often enough: long-only dip buying alone had only 36 active days in its quietest 3-year stretch, close to the 30-day minimum.
+
 ## Assumptions and limitations
 
 - **Depends on volatile markets.** Much of the profit comes from turbulent periods, especially 2020. In calm markets the strategy trades rarely and earns little.
